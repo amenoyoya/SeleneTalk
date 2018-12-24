@@ -1,0 +1,101 @@
+require "Core.sltk"
+
+/*** ニコニコビデオ関連 ***/
+// login to niconico
+// @param mail, password: ログイン用メールアドレス，パスワード
+// @param cookie="niconico-cookie.txt": クッキーファイルの保存パス
+// @return: ログイントップページのHTMLデータ
+def curl.cURL->loginNicoNico(mail, password, cookie){
+	local postfields = "mail="..curl.escape(mail).."&password="..curl.escape(password)
+	local res = ""
+	@->setopt:{
+		url = "https://secure.nicovideo.jp/secure/login?site=niconico",
+		[curl.OPT_SSL_VERIFYPEER] = 0,
+		[curl.OPT_FOLLOWLOCATION] = 1,
+		[curl.OPT_COOKIEJAR] = cookie or "nicocnico-cookies.txt",
+		[curl.OPT_POST] = 1, // ログイン情報はPOSTで送信
+		[curl.OPT_POSTFIELDS] = postfields, // 送信する内容$data
+		writefunction = def(data){
+			res = res..data
+			return true
+		},
+	}->perform()
+	return res
+}
+/*
+ログイン後にサイト内を移動する場合は
+ログイン時に生成するクッキーファイルを[OPT_COOKIEJAR]に指定すれば良い
+*/
+
+
+/* analyze patterns */
+local title_p = lpeg.P'<li class="active" itemscope itemtype="http://data-vocabulary.org/Breadcrumb"><span itemprop="title">' * lpeg.C((lpeg.P(1)-'<')^1) * '</span>' // -> title
+
+local episode_p = lpeg.P'<div class="episode" data-number="' * lpeg.C(lpeg.digit^1) * '" data-idx="' * lpeg.digit^1 * '"><div class="thumb episode_thumb"><a href="'
+* lpeg.C((lpeg.P(1)-'"')^1) * '"><img src="' * lpeg.C((lpeg.P(1)-'"')^1) * '"><span class="mg_status status">' * (lpeg.P(1)-'<')^1 * '</span></a></div><div class="description"><div class="title"><a href="'
+* (lpeg.P(1)-'"')^1 * '">' * lpeg.C((lpeg.P(1)-'<')^1) * '</a>' // -> episode number, episode url, episode thumbnail, episode title
+
+local image_p = lpeg.C(lpeg.P'http://lohas.nicoseiga.jp/thumb/' * lpeg.C(lpeg.digit^1) * 'p') // -> image url, image name
+
+
+// 指定IDのニコニコ漫画情報を取得
+// @param id: 漫画ID or URL
+// @return: {title=漫画タイトル, [1～]={number=話数, url=URL, thumbnail=サムネイル画像, title=エピソードタイトル}}
+def curl.cURL->getNicoComicInfo(id){
+	/* get target comic's HTML */
+	local html = ""
+	@->setopt:{
+		url = (type(id) == 'string' and id->sub(1, 7) == "http://") and id or "http://seiga.nicovideo.jp/comic/"..id,
+		writefunction = def(data){
+			html = html..data
+			return true
+		},
+	}->perform()
+	/* analyze HTML and create comic's information table */
+	local info = :{}
+	lpeg.parse(
+		title_p / def(title){
+			info.title = title
+		} + episode_p / def(n, url, thumb, title){
+			info[#info + 1] = :{
+				number = tonumber(n),
+				url = "http://seiga.nicovideo.jp"..url,
+				thumbnail = thumb,
+				title = title,
+			}
+		}, html
+	)
+	return info
+}
+
+// 指定IDのニコニコ漫画エピソードをダウンロード
+// @param id: ダウンロードするエピソードのID or URL
+// @opt dir: 保存先ディレクトリ（デフォルトは"."）
+// @opt title: エピソードタイトル（指定しなければ自動的に取得）
+//  * 漫画はdir/title/に保存される(title=""ならdir/に保存)
+def curl.cURL->downloadNicoComicEpisode(id, dir, title){
+	/* get target episode's HTML */
+	local html = ""
+	@->setopt:{
+		url = (type(id) == 'string' and id->sub(1, 7) == "http://") and id or "http://seiga.nicovideo.jp/watch/mg"..id,
+		writefunction = def(data){
+			html = html..data
+			return true
+		},
+	}->perform()
+	/* download target episode */
+	dir = Path.appendSlash(Path.appendSlash(dir or ".")..(title or lpeg.search(title_p, html)))
+	lpeg.parse(
+		image_p / def(url, name){
+			local file = File(dir..name..".jpg", "wb")
+			if getState(file) == Object.FAILED { error(getMessage(file)) }
+			@->setopt:{
+				url = url,
+				writefunction = def(data){
+					return 0 < file->write(data)
+				},
+			}->perform()
+			file->close()
+		}, html
+	)
+}

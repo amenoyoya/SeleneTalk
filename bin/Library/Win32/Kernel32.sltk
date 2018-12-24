@@ -1,0 +1,136 @@
+require "WinTypes.sltk"
+
+local kernel = ffi.load"kernel32.dll"
+ffi.cdef[[
+int GetLastError();
+int Beep(unsigned long freq, unsigned long time);
+int CreateMutexW(int lpMutexAttributes, bool bInitialOwner, const wchar_t *lpName);
+bool CloseHandle(int handle);
+int CreateThread(int lpThreadAttributes, int dwStackSize, void __stdcall (*callback)(int), int lpParameter, int dwCreationFlags, int *lpThreadId);
+]]
+
+/* EXEファイルのPEヘッダー情報取得 */
+// bin: readFile("EXEファイル")の戻り値など
+def Win32.getPEHeaderInfo(bin){
+	/* MS-DOSヘッダー */
+	// string.char(MSDOS.e_magic) == 'MZ'
+	local MSDOS = :{
+		e_magic = bin->byte(1, 2),     /* 00: MZ Header signature */
+		e_cblp = bin->byte(3, 4),      /* 02: Bytes on last page of file */
+		e_cp = bin->byte(5,6),         /* 04: Pages in file */
+		e_crlc = bin->byte(7,8),       /* 06: Relocations */
+		e_cparhdr = bin->byte(9,10),   /* 08: Size of header in paragraphs */
+		e_minalloc = bin->byte(11,12), /* 0a: Minimum extra paragraphs needed */
+		e_maxalloc = bin->byte(13,14), /* 0c: Maximum extra paragraphs needed */
+		e_ss = bin->byte(15,16),       /* 0e: Initial (relative) SS value */
+		e_sp = bin->byte(17,18),       /* 10: Initial SP value */
+		e_csum = bin->byte(19,20),     /* 12: Checksum */
+		e_ip = bin->byte(21,22),       /* 14: Initial IP value */
+		e_cs = bin->byte(23,24),       /* 16: Initial (relative) CS value */
+		e_lfarlc = bin->byte(25,26),   /* 18: File address of relocation table */
+		e_ovno = bin->byte(27,28),     /* 1a: Overlay number */
+		e_res = :{     /* 1c: Reserved words */
+			bin->byte(29,30), bin->byte(31,32), bin->byte(33,34), bin->byte(35,36),
+		},
+		e_oemid = bin->byte(37,38),    /* 24: OEM identifier (for e_oeminfo) */
+		e_oeminfo = bin->byte(39,40),  /* 26: OEM information; e_oemid specific */
+		e_res2 = :{   /* 28: Reserved words */
+			 bin->byte(41,42), bin->byte(43,44), bin->byte(45,46), bin->byte(47,48), bin->byte(49,50),
+			 bin->byte(51,52), bin->byte(53,54), bin->byte(55,56), bin->byte(57,58), bin->byte(59,60),
+		},
+		e_lfanew = bin->byte(61,62),   /* 3c: Offset to extended header */
+	}
+
+	/* NEヘッダー */
+	local offset = MSDOS.e_lfanew // NEヘッダーの開始アドレス
+	local NE = :{
+		Signature = bin->byte(offset+1, offset+4),
+		FileHeader = :{
+			Machine = bin->byte(offset+5, offset+6),
+			NumberOfSections = bin->byte(offset+7, offset+8),
+			TimeDateStamp = bin->byte(offset+9, offset+12),
+			PointerToSymbolTable = bin->byte(offset+13, offset+16),
+			NumberOfSymbols = bin->byte(offset+17, offset+20),
+			SizeOfOptionalHeader = bin->byte(offset+21, offset+22),
+			Characteristics = bin->byte(offset+23, offset+24),
+		},
+		OptionalHeader = :{
+			// Standard fields.
+			Magic = bin->byte(offset+25, offset+26),
+			MajorLinkerVersion = bin->byte(offset+27, offset+27),
+			MinorLinkerVersion = bin->byte(offset+28, offset+28),
+			SizeOfCode = bin->byte(offset+29, offset+32),
+			SizeOfInitializedData = bin->byte(offset+33, offset+36),
+			SizeOfUninitializedData = bin->byte(offset+37, offset+40),
+			AddressOfEntryPoint = bin->byte(offset+41, offset+44),
+			BaseOfCode = bin->byte(offset+45, offset+48),
+			BaseOfData = bin->byte(offset+49, offset+52),
+			// NT additional fields.
+			ImageBase = bin->byte(offset+53, offset+56),
+			SectionAlignment = bin->byte(offset+57, offset+60),
+			FileAlignment = bin->byte(offset+61, offset+64),
+			MajorOperatingSystemVersion = bin->byte(offset+65, offset+66),
+			MinorOperatingSystemVersion = bin->byte(offset+67, offset+68),
+			MajorImageVersion = bin->byte(offset+69, offset+70),
+			MinorImageVersion = bin->byte(offset+71, offset+72),
+			MajorSubsystemVersion = bin->byte(offset+73, offset+74),
+			MinorSubsystemVersion = bin->byte(offset+75, offset+76),
+			Win32VersionValue = bin->byte(offset+77, offset+80),
+			SizeOfImage = bin->byte(offset+81, offset+84),
+			SizeOfHeaders = bin->byte(offset+85, offset+88),
+			CheckSum = bin->byte(offset+89, offset+92),
+			Subsystem = bin->byte(offset+93, offset+94),
+			DllCharacteristics = bin->byte(offset+95, offset+96),
+			SizeOfStackReserve = bin->byte(offset+97, offset+100),
+			SizeOfStackCommit = bin->byte(offset+101, offset+104),
+			SizeOfHeapReserve = bin->byte(offset+105, offset+108),
+			SizeOfHeapCommit = bin->byte(offset+109, offset+112),
+			LoaderFlags = bin->byte(offset+113, offset+116),
+			NumberOfRvaAndSizes = bin->byte(offset+117, offset+120),
+			DataDirectory = :{},
+		},
+	}
+	return :{ MSDOS = MSDOS, NE = NE }
+}
+
+/* Beep音再生 */
+// freq: 周波数[Hz]，time: 再生時間[msec]
+def Win32.beep(freq, time){
+	return kernel.Beep(freq, time)
+}
+
+/* 簡易MML */
+// c, d, e, f, g, a, b: ド，レ，ミ，ファ，ソ，ラ，シ
+// 各音階の後ろに再生時間[msec]を記述（省略時は 200 msec）
+local s = :{c = 440, d = 494, e = 554, f = 587, g = 659, a = 740, b = 830}
+local p = lpeg.C(lpeg.R("ag")) * lpeg.C(lpeg.R("09")^0) * lpeg.Cp() / def(sound, time, fin){
+	Win32.beep(s[sound], tonumber(time) or 200)
+	return fin, ""
+}
+def Win32.playMML(mml){
+	return p->parse(mml)
+}
+
+
+/* 二重起動禁止 */
+// Mutex->isExist(): trueならすでに起動中
+// Mutex->close(): Mutexハンドルを解放する
+def Win32.Mutex(name){
+	return :{
+		handle = kernel.CreateMutexW(0, false, Encoding.utf8ToWideString(name)),
+		isExist = def(@){ return kernel.GetLastError() == 183 /* ERROR_ALREADY_EXISTS */ },
+		close = def(@){ return @.handle != 0 and kernel.CloseHandle(@.handle) },
+	}
+}
+
+
+/* スレッド作成 */
+def Win32.Thread(callback){
+	local id = ffi.new"int[1]"
+	local handle = kernel.CreateThread(0, 0, callback, 0, 0, id)
+	return :{
+		handle = handle, id = id[1], close = def(@){
+			return @.handle != 0 and kernel.CloseHandle(@.handle)
+		},
+	}
+}

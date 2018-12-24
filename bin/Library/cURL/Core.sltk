@@ -1,0 +1,69 @@
+/*** Lua cURL warapper library ***/
+local htmlparser = require "../htmlparser/__Main.lua"
+curl = require "Plugin/lcurl"
+
+/* URLエンコード/デコード */
+local _curl = curl.easy()
+
+def curl.escape(str){
+	return _curl->escape(str)
+}
+def curl.unescape(url){
+	return _curl->unescape(url)
+}
+
+
+/*** cURL easy object wrapper class ***/
+// 主要なオプション：
+//   url: 接続先URL, [OPT_VERBOSE]: 詳細な進行状況の表示(true/false),
+//   [OPT_UPLOAD]: ファイルアップロード(true/false),
+//   readfunction: function(number nSize)->string: cURLに読み込ませるデータの指定（アップロード関数）,
+//   writefunction: function(string data)->boolean: cURLに書き込ませる処理の指定（ダウンロード関数）
+curl.cURL = class:{
+	constructor = def(@, opt){
+		@.data = ''
+		if type(opt) == 'table' and type(opt.writefunction) != 'function' {
+			opt.writefunction = def(data){
+				@.data = @.data..data
+				return true
+			}
+		}
+		@.curl = curl.easy(opt)
+	},
+	destructor = def(@){
+		@.data = ''
+		@.curl->close()
+	},
+	perform = def(@){ // Perform a file transfer
+		@.data = ''
+		@.curl->perform()
+		return @
+	},
+	close = def(@){ // End easy session
+		@.curl->close()
+	},
+	parse = def(@, data){ // HTMLデータの構文解析
+		return htmlparser.parse(data or @.data)
+	},
+	reset = def(@){ // Re-initializes all options previously set.
+		@.curl->reset()
+		return @
+	},
+	pause = def(@, mask){ //Pause and unpause a connection.
+		// @param mask: PAUSE_XXX const.
+		@.curl->pause(mask)
+		return @
+	},
+	setopt = def(@, opt, ...){ // Set options.
+		@.curl->setopt(opt, ...)
+		return @
+	},
+	unsetopt = def(@, opt){ // Reset option to default value.
+		@.curl->unsetopt(opt)
+		return @
+	},
+	getinfo = def(@, info){ // Get information.
+		// @param info: INFO_XXX const.
+		return @.curl->getinfo(info)
+	},
+}

@@ -1,0 +1,192 @@
+require "WinTypes.sltk"
+
+local user32 = ffi.load"user32.dll"
+ffi.cdef[[
+int FindWindowW(const wchar_t *className, const wchar_t *windowName);
+int GetParent(int hwnd);
+int GetFocus();
+bool MoveWindow(int hwnd, int x, int y, int width, int height, int repaint);
+int EnumWindows(int __stdcall (*proc)(int hwnd, int lp), int lp);
+int EnumChildWindows(int hwnd, int __stdcall (*proc)(int hwnd, int lp), int lp);
+bool IsIconic(int hwnd);
+bool IsZoomed(int hwnd);
+bool IsWindowVisible(int hwnd);
+bool IsWindowEnabled(int hwnd);
+bool IsWindowVisible(int hwnd);
+int GetDlgCtrlID(int hwnd);
+int GetWindowThreadProcessId(int hwnd, int *processID);
+int SendMessageW(int hwnd, int msg, int wp, int lp);
+int PostMessageW(int hwnd, int msg, int wp, int lp);
+int SetForegroundWindow(int hwnd);
+int SetTimer(int hwnd, int id, int interval, int __stdcall (*proc)(int hwnd, int msg, int id, int time));
+bool KillTimer(int hwnd, int id);
+bool SetLayeredWindowAttributes(int hwnd, int crKey, char bAlpha, int dwFlags);
+
+typedef struct{
+	int left, top, right, bottom;
+}RECT;
+int GetWindowRect(int hWnd, RECT *lpRect);
+int GetClientRect(int hwnd, RECT *lpRect);
+]]
+
+/* ウィンドウハンドル探索＆取得 */
+def Win32.findWindow(className, windowName){
+	return user32.FindWindowW(className and Encoding.utf8ToWideString(className),
+		windowName and Encoding.utf8ToWideString(windowName))
+}
+
+/* 親ウィンドウハンドル取得 */
+def Win32.getParent(hwnd){
+	return user32.GetParent(hwnd)
+}
+
+/* フォーカスウィンドウハンドル取得 */
+def Win32.getFocus(){
+	return user32.GetFocus()
+}
+
+/* ウィンドウ移動 */
+def Win32.moveWindow(hwnd, x, y, width, height, repaint){
+	return user32.MoveWindow(hwnd, x, y, width, height, repaint and 1 or 0)
+}
+
+/* アクティブなウィンドウハンドルを全て列挙 */
+def Win32.enumerateWindows(proc){
+	if type(proc) == 'function' {
+		return user32.EnumWindows(proc, 0)
+	}else{
+		local handles, i = :{}, 1
+		user32.EnumWindows(def(hwnd){
+			handles[i] = hwnd
+			i = i + 1
+			return true
+		}, 0)
+		return handles
+	}
+}
+
+/* hwndで指定したハンドルのウィンドウの子ウィンドウハンドルを全て列挙 */
+def Win32.enumerateChildWindows(hwnd, proc){
+	if type(proc) == 'function' {
+		return user32.EnumChildWindows(hwnd, proc, 0)
+	}else{
+		local handles, i = :{}, 1
+		user32.EnumChildWindows(hwnd, def(hwnd){
+			handles[i] = hwnd
+			i = i + 1
+			return true
+		}, 0)
+		return handles
+	}
+}
+
+/* hwndで指定したハンドルの状態取得 */
+def Win32.isWindowIconic(hwnd){ // 最小化？
+	return user32.IsIconic(hwnd)
+}
+def Win32.isWindowZoomed(hwnd){ // 最大化？
+	return user32.IsZoomed(hwnd)
+}
+def Win32.isWindowVisible(hwnd){ // 表示？
+	return user32.IsWindowVisible(hwnd)
+}
+def Win32.isWindowEnabled(hwnd){ // 有効？
+	return user32.IsWindowEnabled(hwnd)
+}
+def Win32.isWindowVisible(hwnd){ // 可視？
+	return user32.IsWindowVisible(hwnd)
+}
+
+/* hwndで指定したハンドルのコントロールのIDを取得 */
+def Win32.getDialogControlID(hwnd){
+	return user32.GetDlgCtrlID(hwnd)
+}
+
+def Win32.getWindowThreadProcessID(hwnd){
+	local procID = ffi.new"int[1]"
+	local thread = user32.GetWindowThreadProcessId(hwnd, procID)
+	return thread, procID[0]
+}
+
+/* Win32.Processからhwnd配列取得 */
+// callback[=nil]: function(hwnd)->boolean
+def Win32.getProcessWindowHandles(process, callback){
+	local procID, threadID = process->getProcessID(), process->getThreadID()
+	
+	if type(callback) == 'function' {
+		Win32.enumerateWindows(def(hwnd){
+			local th, proc = Win32.getWindowThreadProcessID(hwnd)
+			
+			if procID == proc and (threadID == 0 or threadID == th) and Win32.isWindowVisible(hwnd) {
+				return callback(hwnd)
+			}
+			return true
+		})
+	}else{ // callback未指定の場合，全てのhwndを取得
+		local hwnds, i = :{}, 1
+		
+		Win32.enumerateWindows(def(hwnd){
+			local th, proc = Win32.getWindowThreadProcessID(hwnd)
+			
+			if procID == proc and (threadID == 0 or threadID == th) and Win32.isWindowVisible(hwnd) {
+				hwnds[i] = hwnd
+				i = i + 1
+			}
+			return true
+		})
+		return hwnds
+	}
+}
+
+/* hwndで指定したハンドルのウィンドウにメッセージを送信 */
+def Win32.sendMessage(hwnd, msg, wp, lp){
+	return user32.SendMessageW(hwnd, msg, wp, lp)
+}
+
+def Win32.postMessage(hwnd, msg, wp, lp){
+	return user32.PostMessageW(hwnd, msg, wp, lp)
+}
+
+/* hwndで指定したハンドルのウィンドウをアクティブにする */
+def Win32.setForegroundWindow(hwnd){
+	return user32.SetForegroundWindow(hwnd)
+}
+
+/* hwndで指定したハンドルのウィンドウにタイマーをセットする */
+// タイマーIDがreturnされる．hwnd=0ならグローバルタイマー作成
+// id: タイマー識別用ID．hwnd=0なら無視される
+// interval: インターバルをミリ秒単位で指定
+// callback: function(int hwnd, int msg, int id, int time)->int（指定しない場合は，WM_TIMERイベントにて処理）
+def Win32.setTimer(hwnd, id, interval, callback){
+	return user32.SetTimer(hwnd, id, interval, callback)
+}
+
+/* setTimerで作ったタイマーを削除する */
+def Win32.killTimer(hwnd, id){
+	return user32.KillTimer(hwnd, id)
+}
+
+/* レイヤードウィンドウ作成 */
+// WS_EX_LAYERED拡張スタイルのウィンドウを透過する
+def Win32.setLayeredWindow(hwnd, key, alpha){
+	if key {
+		return user32.SetLayeredWindowAttributes(hwnd,
+			(key & 0xff) << 16 | ((key >> 8) & 0xff) << 8 | ((key >> 16) & 0xff) << 0, 0, 1)
+	}else{
+		return user32.SetLayeredWindowAttributes(hwnd, 0, alpha or 0, 2)
+	}
+}
+
+/* hwndで指定したハンドルのウィンドウの位置を取得 */
+def Win32.getWindowPosition(hwnd){
+	local rect = ffi.new"RECT[1]"
+	user32.GetWindowRect(hwnd, rect)
+	return rect[0].left, rect[0].top, rect[0].right, rect[0].bottom
+}
+
+/* hwndで指定したハンドルのウィンドウのサイズを取得 */
+def Win32.getWindowSize(hwnd){
+	local rect = ffi.new"RECT[1]"
+	user32.GetClientRect(hwnd, rect)
+	return rect[0].right, rect[0].bottom
+}

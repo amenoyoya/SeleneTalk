@@ -1,0 +1,77 @@
+/*** Lua cURL warapper library ***/
+local curl = require "Plugin/lcurl"
+
+// cURL easy perform
+// 主要なオプション：
+//   url: 接続先URL, [OPT_VERBOSE]: 詳細な進行状況の表示(true/false),
+//   [OPT_UPLOAD]: ファイルアップロード(true/false),
+//   readfunction: function(number nSize)->string: cURLに読み込ませるデータの指定（アップロード関数）,
+//   writefunction: function(string data)->boolean: cURLに書き込ませる処理の指定（ダウンロード関数）
+def curl.execute(opt){
+	curl.easy(opt)->perform()->close()
+}
+
+
+/*** DropBox関連 ***/
+// cURL upload to DropBox
+// token: DropBox API Token
+// filename: 保存ファイル名
+// data: string or Sltk.FileReader
+def curl.uploadDropBox(token, filename, data){
+	local readfunction
+	
+	if type(data) == 'string' { // 文字列をアップロード
+		local cur = 1
+		readfunction = def(n){
+			local res = data->sub(cur, cur + n - 1)
+			cur = cur + n
+			return res
+		}
+	}else{ // ファイルをアップロード
+		local cur = 0
+		readfunction = def(n){
+			local remain = data->getSize() - cur
+			if remain <= 0 { return "" }
+			if n > remain { n = remain }
+			local bin = Binary(n)
+			data->read(bin->getPointer(), n)
+			cur = cur + n
+			return bin->getPointerString()
+		}
+	}
+	// DropBoxへアップロード実行
+	curl.execute:{
+		url = "https://content.dropboxapi.com/1/files_put/auto/"..filename,
+		[curl.OPT_SSL_VERIFYPEER] = false, //Windowsでエラー出るのでSSL証明確認を無効化
+		[curl.OPT_HTTPHEADER] = :{
+			"Authorization: Bearer "..token,
+		},
+		[curl.OPT_UPLOAD] = true,
+		[curl.OPT_CUSTOMREQUEST] = "PUT",
+		readfunction = readfunction,
+	}
+}
+
+// cURL download from DropBox
+// token: DropBox API Token
+// filename: 保存ファイル名
+// 戻り値：ファイルがない場合はJSON{"error": "File not Found"}が返る
+def curl.downloadDropBox(token, filename){
+	local data = Binary()
+	curl.execute:{
+		url = "https://content.dropboxapi.com/1/files/auto/"..filename,
+		[curl.OPT_SSL_VERIFYPEER] = false, //Windowsでエラー出るのでSSL証明確認を無効化
+		[curl.OPT_HTTPHEADER] = :{
+			"Authorization: Bearer "..token,
+		},
+		[curl.OPT_CUSTOMREQUEST] = "GET",
+		writefunction = def(dat){
+			data->pushString(dat, dat->len())
+			return true
+		},
+	}
+	return data
+}
+
+
+return curl

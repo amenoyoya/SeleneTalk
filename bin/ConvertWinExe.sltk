@@ -1,0 +1,24 @@
+// SeleneTalk.exe（コンソールアプリ）とSelenealkWin.exe（Windowsアプリ）を相互変換
+local bin = readFile(os.argv[0])
+local offset = bin->byte(61, 62)
+local subsys = bin->byte(offset+93, offset+94)
+
+if subsys == 2 { // Windowsアプリ -> コンソールアプリ
+	if 0 < writeFile("SeleneTalk.exe",
+		bin->sub(1, offset+92)..string.char(3)..string.char(0)..bin->sub(offset+95))
+	{
+		Win32.showMessageBox("コンソールアプリの生成に成功しました", "ConvertWinExe")
+	}else{
+		Win32.showMessageBox("SeleneTalk.exeファイルの書き込みに失敗しました", "ConvertWinExe", Win32.MB_OK|Win32.MB_ICONWARNING)
+	}
+}elif subsys == 3 { // コンソールアプリ -> Windowsアプリ
+	if 0 < writeFile("SeleneTalkWin.exe",
+		bin->sub(1, offset+92)..string.char(2)..string.char(0)..bin->sub(offset+95))
+	{
+		Win32.showMessageBox("Windowsアプリの生成に成功しました", "ConvertWinExe")
+	}else{
+		Win32.showMessageBox("SeleneTalkWin.exeファイルの書き込みに失敗しました", "ConvertWinExe", Win32.MB_OK|Win32.MB_ICONWARNING)
+	}
+}else{
+	Win32.showMessageBox("実行ファイルがデバイスドライバー形式のため失敗しました", "ConvertWinExe", Win32.MB_OK|Win32.MB_ICONWARNING)
+}

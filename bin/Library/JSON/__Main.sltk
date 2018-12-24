@@ -1,0 +1,22 @@
+local JSON = require "JSON.lua"
+local json = :{}
+
+// JSON -> table
+// 戻り値：[false, errorCode] or [table]
+def json.decode(data){
+	local ok, res = xpcall(def(){
+		return JSON->decode(data)
+	}, def(err){
+		return err
+	})
+	if !ok { return false, res }
+	return res
+}
+
+// table -> JSON
+// pretty: trueならきれいに整形
+def json.encode(data, pretty){
+	return pretty and JSON->encode_pretty(data) or JSON->encode(data)
+}
+
+return json

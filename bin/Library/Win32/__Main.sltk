@@ -1,0 +1,4 @@
+require "User32.sltk"
+require "Shell32.sltk"
+require "Kernel32.sltk"
+require "BrowserWindow.sltk"

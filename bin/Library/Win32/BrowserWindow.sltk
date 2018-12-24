@@ -1,0 +1,231 @@
+require "User32.sltk"
+
+/*** Win32.Browser拡張クラス ***/
+Win32.BrowserEx = class:{
+	constructor = def(@, parent, x, y, w, h){
+		@.handle = Win32.Browser()
+		@.scripts = :{} // location="script:XXX"で実行するスクリプトテーブル
+		
+		/* 各種イベントの制御を仮想関数で行う */
+		@.handle->setFunction_beforeNavigate(def(url){
+			if !@->onBeforeNavigate(url) { return false }
+			// locationとして"script:メンバ関数?引数"を指定された場合，scriptsテーブルの関数が実行される
+			if url->sub(1, 7) == "script:" {
+				local data = lpeg.split("?", url->sub(8))
+				local f = @.scripts[data[1]]
+				if type(f) == 'function' { return f(data[2]) }
+			}
+			// scriptsテーブルをクリアする
+			@.scripts = :{}
+			return true
+		})
+		@.handle->setFunction_documentComplete(def(url){
+			local scripts = @->getElementsByTag"script"
+			// ページロード時に<script type="selenetalk">のスクリプトを実行
+			for i = 1, scripts->getSize() {
+				local script = scripts[i-1]
+				local lang = script->getAttribute("type").strVal
+				local src = script->getAttribute("src").strVal
+				if lang->same"selenetalk" {
+					if src != "" {
+						assert(loadstring("return def(@){"..readFile(src).."}", src))()(@)
+					}
+					assert(loadstring("return def(@){"..script->getInnerHTML().."}", "script/selenetalk"))()(@)
+				}
+			}
+			@->onDocumentComplete(url)
+		})
+		@.handle->setFunction_newWindow(def(url){
+			return @->onNewWindow(url)
+		})
+		
+		if parent and x and y and w and h { @->open(parent, x, y, w, h) }
+	},
+	
+	open = def(@, parent, x, y, w, h){
+		if !@.handle->open(parent, x, y, w, h) {
+			error(getMessage(@.handle))
+		}
+	},
+	close = def(@){
+		@.handle->close()
+	},
+	getURL = def(@){
+		return @.handle->getURL()
+	},
+	goHome = def(@){
+		return @.handle->goHome()
+	},
+	goBack = def(@){
+		return @.handle->goBack()
+	},
+	goForward = def(@){
+		return @.handle->goForward()
+	},
+	navigate = def(@, url){
+		return @.handle->navigate(url)
+	},
+	writeHTML = def(@, html){
+		return @.handle->writeHTML(html)
+	},
+	setSilent = def(@, flag){
+		return @.handle->setSilent(flag)
+	},
+	refresh = def(@){
+		return @.handle->refresh()
+	},
+	stop = def(@){
+		return @.handle->stop()
+	},
+	processKey = def(@, hwnd, msg, wp, lp){
+		if wp != Win32.VK_LEFT and wp != Win32.VK_RIGHT
+			and wp != Win32.VK_UP and wp != Win32.VK_DOWN and wp != Win32.VK_BACK
+		{
+			@.handle->processKey(hwnd, msg, wp, lp)
+		}
+	},
+	
+	executeScript = def(@, script, ...){
+		local n, args = 0, :{}
+		
+		for _, arg in pairs :{...} {
+			if type(arg) == 'string' {
+				n = n + 1
+				args[n] = Win32.Variant(Win32.VT_STRING, arg)
+			}elif type(arg) == 'number' {
+				n = n + 1
+				args[n] = Win32.Variant(Win32.VT_NUMBER, "", 0, arg)
+			}
+		}
+		return @.handle->executeScript(script, n, args)
+	},
+	eval = def(@, js){
+		return @->executeScript("eval", js)
+	},
+	
+	getAllElements = def(@){
+		return @.handle->getAllElements()
+	},
+	getElementsByTag = def(@, tagName){
+		return @.handle->getElementsByTag(tagName)
+	},
+	getElementsByName = def(@, name){
+		return @.handle->getElementsByName(name)
+	},
+	getElementByID = def(@, id){
+		return @.handle->getElementByID(id)
+	},
+	getBody = def(@){
+		return @.handle->getBody()
+	},
+	executeCommand = def(@, command, showUI, value){
+		if type(value) == 'string' {
+			value = Win32.Variant(Win32.VT_STRING, value)
+		}elif type(value) == 'number' {
+			value = Win32.Variant(Win32.VT_NUMBER, "", 0, value)
+		}elif value == nil {
+			value = Win32.Variant()
+		}
+		return @.handle->executeCommand(command, showUI and showUI, value)
+	},
+	
+	getWindowHandle = def(@){
+		return @.handle->getWindowHandle()
+	},
+	
+	// 指定IDの要素の属性/htmlを取得
+	getValue = def(@, id, attr){
+		if attr == "html" { return @->getElementByID(id)->getInnerHTML() }
+		elif attr == "text" { return @->getElementByID(id)->getInnerText() }
+		elif attr == "class" { return @->getElementByID(id)->getClass() }
+		elif attr == "id" { return @->getElementByID(id)->getID() }
+		
+		local val = @->getElementByID(id)->getAttribute(attr)
+		if val.vType == Win32.VT_INTEGER { return val.intVal }
+		elif val.vType == Win32.VT_NUMBER { return val.numVal }
+		elif val.vType == Win32.VT_STRING { return val.strVal }
+		else { return "" }
+	},
+	// 指定IDの要素の属性を変更
+	setValue = def(@, id, attr, value){
+		if attr == "html" { return @->getElementByID(id)->setInnerHTML(value) }
+		elif attr == "text" { return @->getElementByID(id)->setInnerText(value) }
+		elif attr == "class" { return @->getElementByID(id)->setClass(value) }
+		elif attr == "id" { return @->getElementByID(id)->setID(value) }
+		return @->getElementByID(id)->setAttribute(attr, Win32.Variant(Win32.VT_STRING, tostring(value)))
+	},
+	
+	/* 仮想関数 */
+	onBeforeNavigate = def(@, url){ return true },
+	onDocumentComplete = def(@, url){},
+	onNewWindow = def(@, url){ return true },
+}
+
+
+/*** Browser + Window ラッパークラス ***/
+Win32.BrowserWindow = class(Win32.BrowserEx):{
+	constructor = def(@, parent, title, x, y, w, h, style, exstyle){
+		Win32.BrowserEx.constructor(@)
+		@.window = Win32.Window()
+		
+		if parent and title {
+			@->open(parent, title, x or 0x80000000, y or 0x80000000, w or 640, h or 480,
+				style or Win32.WS_OVERLAPPEDWINDOW, exstyle or 0)
+		}
+		@->setProcedure(def(hwnd, msg, wp, lp){ // ウィンドウプロシージャの各イベントは@.events[WM_XXX]で設定
+			local proc = @.events[msg]
+			if type(proc) == 'function' { return proc(@, hwnd, wp, lp) }
+			return true
+		})
+	},
+	
+	open = def(@, parent, title, x, y, w, h, style, exstyle){
+		if !@.window->open(parent or 0, title or "BrowserWindow", x or 0x80000000, y or 0x80000000, w or 640, h or 480,
+			style or Win32.WS_OVERLAPPEDWINDOW, exstyle or 0)
+		{
+			error(getMessage(@.window))
+		}
+		Win32.BrowserEx.open(@, @.window->getHandle(), 0, 0, w or 640, h or 480)
+	},
+	
+	close = def(@){
+		Win32.BrowserEx.close(@)
+		@.window->close()
+	},
+	
+	show = def(@, flag){
+		return @.window->show(flag or 1)
+	},
+	
+	setProcedure = def(@, procedure){
+		@.window->setProcedure(procedure)
+	},
+	
+	// ウィンドウプロシージャ定義テーブル
+	events = :{
+		[Win32.WM_KEYDOWN] = def(@, hwnd, wp, lp){ // ブラウザ内キーイベントの処理
+			@->processKey(hwnd, Win32.WM_KEYDOWN, wp, lp)
+			return true
+		},
+		[Win32.WM_SIZE] = def(@, hwnd, wp, lp){ // デフォルトのサイズ変更イベント
+			Win32.moveWindow(@->getBrowserWindowHandle(),
+				0, 0, lp & 0xffff /* LOWORD(lp) */, lp >> 16 /* HIWORD(lp) */, false)
+			return true
+		},
+	},
+	
+	getWindowHandle = def(@){
+		return @.window->getHandle()
+	},
+	getBrowserWindowHandle = def(@){
+		return Win32.BrowserEx.getWindowHandle(@)
+	},
+}
+
+
+/*** メインループ ***/
+def Win32.processMainLoop(){
+	while Win32.pollWindowMessage() {
+		// Windows10だと，ここでSystem.sleep(1)すると極端に遅くなる
+	}
+}

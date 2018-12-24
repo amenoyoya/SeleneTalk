@@ -1,0 +1,63 @@
+require "Core.sltk"
+
+/*** DropBox関連 ***/
+// cURL upload to DropBox
+// @param token: DropBox API Token
+// @param filename: 保存ファイル名
+// @param data: string or Sltk.FileReader
+// @return: tokenが無効ならJSON{"error": "OAuth 2 ..."}が返る
+def curl.cURL->uploadDropBox(token, filename, data){
+	local readfunction
+	local res = ""
+	
+	if type(data) == 'string' { // 文字列をアップロード
+		local cur = 1
+		readfunction = def(n){
+			local res = data->sub(cur, cur + n - 1)
+			cur = cur + n
+			return res
+		}
+	}else{ // ファイルをアップロード
+		readfunction = def(n){
+			return getState(data) == Object.ACTIVE and data->read(n) or ""
+		}
+	}
+	// アップロード実行
+	@->setopt:{
+		url = "https://content.dropboxapi.com/1/files_put/auto/"..filename,
+		[curl.OPT_SSL_VERIFYPEER] = false, //Windowsでエラー出るのでSSL証明確認を無効化
+		[curl.OPT_HTTPHEADER] = :{
+			"Authorization: Bearer "..token,
+		},
+		[curl.OPT_UPLOAD] = true,
+		[curl.OPT_CUSTOMREQUEST] = "PUT",
+		readfunction = readfunction,
+		writefunction = def(data){
+			res = res..data
+			return true
+		},
+	}->perform()
+	return res
+}
+
+// cURL download from DropBox option
+// @param token: DropBox API Token
+// @param filename: 保存ファイル名
+// @return: tokenが無効ならJSON{"error": "OAuth 2 ..."}が返る
+//          ファイルがない場合はJSON{"error": "File not found"}が返る
+def curl.cURL->downloadDropBox(token, filename){
+	local data = ""
+	@->setopt:{
+		url = "https://content.dropboxapi.com/1/files/auto/"..filename,
+		[curl.OPT_SSL_VERIFYPEER] = false, //Windowsでエラー出るのでSSL証明確認を無効化
+		[curl.OPT_HTTPHEADER] = :{
+			"Authorization: Bearer "..token,
+		},
+		[curl.OPT_CUSTOMREQUEST] = "GET",
+		writefunction = def(dat){
+			data = data..dat
+			return true
+		},
+	}->perform()
+	return data
+}

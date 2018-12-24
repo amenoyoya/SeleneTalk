@@ -1,0 +1,137 @@
+/*** ライブラリのロード順 ***/
+/** Coreライブラリ
+	1. Table
+	2. String
+	3. Main (this file)
+/****************************/
+
+local bit = require "bit"
+
+/* bit not */
+bnot = bit.bnot
+
+/* N % n (1～n) 剰余計算 */
+mod = def(N, n){
+	local a = N % n
+	return a == 0 and n or a
+}
+
+/* SeleneTalk Engine Script File Reader */
+Sltk.Engine.reader = Sltk.FileReader()
+
+/* loadstring */
+loadstring = Sltk.Engine.loadString
+
+
+/*** Sltk.writeFile, Sltk.readFile ***/
+Sltk.writeFile = def(filename, data, size, n){
+	local file, res = Sltk.File(filename, "wb")
+	if Sltk.getState(file) == Sltk.Object.FAILED { return 0 }
+	res = file->write(data, size, n)
+	file->close()
+	return res
+}
+Sltk.readFile = def(filename, size, n){
+	if !Sltk.Engine.reader->open(filename) { return "" }
+	local res = Sltk.Engine.reader->read(size or Sltk.Engine.reader->getSize(), n)
+	Sltk.Engine.reader->close()
+	return res
+}
+
+
+/*** Sltk.ZipArchiver追加メソッド ***/
+local meta = getmetatable(Sltk.ZipArchiver)
+setmetatable(Sltk.ZipArchiver, :{})
+Sltk.ZipArchiver.openReadCurrentFile = def(@, size, password){
+	local data = @->openCurrentFile(password) and @->readCurrentFile(size)
+	@->closeCurrentFile()
+	return data
+}
+setmetatable(Sltk.ZipArchiver, meta)
+
+
+/*** System関連ライブラリ（osテーブルに統合） ***/
+os.execute = Sltk.System.execute
+os.sleep = Sltk.System.sleep
+os.systime = Sltk.System.getTime
+os.setenv = Sltk.System.setEnvironmentVariable
+os.getenv = Sltk.System.getEnvironmentVariable
+os.setcwd = Sltk.System.setCurrentDirectory
+os.getcwd = Sltk.System.getCurrentDirectory
+
+
+/*** package.loaders追加 ***/
+package.libloaders = :{} // LibraryLoaders配列
+package.loadpath = :{"", "."} // 探索パス（空文字""は，requireにフルパスを渡したとき用）
+// package.loadpathテーブルからスクリプト/プラグイン探索
+package.loaders[3] = def(filename){
+	local msg, lib = "", Sltk.LibraryLoader()
+	
+	for i = 1, #package.loadpath {
+		local path = package.loadpath[i]
+		local filepath = path == "" and filename or Sltk.Path.appendSlash(path)..filename
+		local ext = Sltk.Path.getExtension(filename)
+		/* 拡張子がdll,soならプラグインとしてload */
+		if (ext->same".dll" or ext->same".so") and lib->open(filepath) {
+			local loader = lib->getFunction"luaopen_module"
+			if !loader {
+				error("function 'luaopen_module' not found in module file '"..filepath.."'.")
+			}
+			package.libloaders[#package.libloaders + 1] = lib
+			return loader
+		}
+		
+		/* スクリプトファイルload */
+		local func = Sltk.Engine.require(filepath)
+		if type(func) == 'function' { return func }
+		
+		/* 拡張子をdll,soとしてプラグインload */
+		local plugin = filepath..".dll"
+		if lib->open(plugin) {
+			local loader = lib->getFunction"luaopen_module"
+			if !loader {
+				error("function 'luaopen_module' not found in module file '"..plugin.."'.")
+			}
+			package.libloaders[#package.libloaders + 1] = lib
+			return loader
+		}
+		plugin = filepath..".so"
+		if lib->open(plugin) {
+			local loader = lib->getFunction"luaopen_module"
+			if !loader {
+				error("function 'luaopen_module' not found in module file '"..plugin.."'.")
+			}
+			package.libloaders[#package.libloaders + 1] = lib
+			return loader
+		}
+		/* エラーメッセージ更新 */
+		msg = msg.."\n\tmodule '"..filename.."' not found in package.loadpath."
+	}
+	return msg
+}
+
+
+/*** ffi関数 ***/
+ffi = require "ffi"
+
+if ffi.os == "Windows" {
+	/* UTF-8 <-> wchar_t[] */
+	ffi.cdef[[
+	bool utf8ToWideString(const char *src, wchar_t *dest, unsigned long size);
+	bool wideStringToUTF8(const wchar_t *src, char *dest, unsigned long size);
+	]]
+	
+	Sltk.Encoding.utf8ToWideString = def(src){
+		local size = src->len()
+		local dest = ffi.new("wchar_t["..(size+1).."]")
+		ffi.C.utf8ToWideString(src, dest, size)
+		return dest
+	}
+	
+	Sltk.Encoding.wideStringToUTF8 = def(src){
+		local size = ffi.sizeof(src)
+		local dest = ffi.new("char["..(size+1).."]")
+		ffi.C.wideStringToUTF8(src, dest, size)
+		return ffi.string(dest)
+	}
+}

@@ -1,0 +1,35 @@
+/*** マルチスレッドライブラリ ***/
+require "Plugin/Sltk/Thread"
+
+Sltk.System.Thread = class:{
+	constructor = def(@, callback){
+		@.handle = 0
+		if callback { @->open(callback) }
+	},
+	destructor = def(@){
+		@->close()
+	},
+	
+	/* スレッド作成・破棄 */
+	// callback: function(hMutex)->void
+	open = def(@, callback){
+		if type(callback) != 'function' {
+			error"function 'Sltk::System::createThread' #1 expected function."
+		}
+		@->close()
+		@.handle = Sltk.System.createThread(callback)
+	},
+	close = def(@){
+		if @.handle != 0 {
+			Sltk.System.releaseThread(@.handle)
+			@.handle = 0
+		}
+	},
+	
+	/* スレッド終了待機 */
+	wait = def(@){
+		if @.handle != 0 {
+			Sltk.System.waitThread(@.handle)
+		}
+	},
+}

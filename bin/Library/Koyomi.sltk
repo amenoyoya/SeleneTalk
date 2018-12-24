@@ -1,0 +1,163 @@
+/*** 暦関連ライブラリ ***/
+local Koyomi = :{}
+
+// 干支，五行，曜日表
+Koyomi.K10 = :{'甲','乙','丙','丁','戊','己','庚','辛','壬','癸'}
+Koyomi.S12 = :{'子','丑','寅','卯','辰','巳','午','未','申','酉','戌','亥'}
+Koyomi.E5 = :{'木','火','土','金','水'}
+Koyomi.Week = :{'日','月','火','水','木','金','土'}
+
+// 二十四節気補正表（2099年まで有効）
+Koyomi.SK24 = :{
+	:{ // １月 //
+		:{name = "小寒", 6.3811, 0.242778}, // 年は[-1]
+		:{name = "大寒", 21.1046, 0.242765}, // 年は[-1]
+	},
+	:{ // ２月 //
+		:{name = "立春", 4.8693, 0.242713}, // 年は[-1]
+		:{name = "雨水", 19.7062, 0.242627}, // 年は[-1]
+	},
+	:{ // ３月 //
+		:{name = "啓蟄", 6.3968, 0.242512}, :{name = "春分", 21.4471, 0.242377},
+	},
+	:{ // ４月 //
+		:{name = "清明", 5.6280, 0.242231}, :{name = "穀雨", 20.9375, 0.242083},
+	},
+	:{ // ５月 //
+		:{name = "立夏", 6.3771, 0.241945}, :{name = "小満", 21.9300, 0.241825},
+	},
+	:{ // ６月 //
+		:{name = "芒種", 6.5733, 0.241731}, :{name = "夏至", 22.2747, 0.241669},
+	},
+	:{ // ７月 //
+		:{name = "小暑", 8.0091, 0.241642}, :{name = "大暑", 23.7317, 0.241654},
+	},
+	:{ // ８月 //
+		:{name = "立秋", 8.4102, 0.241703}, :{name = "処暑", 24.0125, 0.241786},
+	},
+	:{ // ９月 //
+		:{name = "白露", 8.5186, 0.241898}, :{name = "秋分", 23.8896, 0.242032},
+	},
+	:{ // １０月 //
+		:{name = "寒露", 9.1414, 0.242179}, :{name = "霜降", 24.2487, 0.242328},
+	},
+	:{ // １１月 //
+		:{name = "立冬", 8.2396, 0.242469}, :{name = "小雪", 23.1189, 0.242592},
+	},
+	:{ // １２月 //
+		:{name = "大雪", 7.9152, 0.242689}, :{name = "冬至", 22.6587, 0.242752},
+	},
+}
+
+
+// グレゴリウス暦1年1月1日からの経過日数を求める。
+// （グレゴリウス暦施行前の日付も形式的にグレゴリウス暦と同じルールで計算）
+def Koyomi.getDays(date){
+	local y, m, d = date.year, date.month, date.day
+	// 1・2月 → 前年の13・14月
+	if m <= 2 {
+		y, m = y - 1, m + 12
+	}
+	local dy = 365 * (y - 1) // 経過年数×365日
+	local c = y $ 100
+	local dl = (y >> 2) - c + (c >> 2) // うるう年分
+	local dm = (m * 979 - 1033) >> 5 // 1月1日から m 月1日までの日数
+	return dy + dl + dm + d - 1
+}
+
+
+// 曜日判定
+// <returns>1: 日曜、2: 月曜、…、7: 土曜</returns>
+def Koyomi.getWeek(date){
+	local y, m, d = date.year, date.month, date.day
+	local c = y $ 100
+	y = y % 100
+	local w = (d + 26 * (m + 1) $ 10 + y + y $ 4  + c $ 4 - 2 * c) % 7
+	return w == 0 and 7 or w
+}
+
+
+// 閏年か判定
+def Koyomi.isLeap(year){
+	return year % 4 == 0 and (year % 400 == 0 or year % 100 != 0)
+}
+
+
+// 月の日数を取得
+def Koyomi.getMonthDays(year, month){
+	if month == 2 and Koyomi.isLeap(year) { return 29 }
+	return (:{31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31})[month]
+}
+
+
+// 二十四節気の日付を求める
+// n: 1 or 2(デフォルト)
+def Koyomi.get24skDay(year, month, n){
+	local t = Koyomi.SK24[month][n or 2]
+	if month == 1 or month == 2 { // 1月，2月は前年で計算
+		year = year - 1
+	}
+	return t and (t[1] + (t[2] * (year - 1900))) $ 1 - ((year - 1900) / 4) $ 1
+}
+
+
+// 日の十干，十二支から空亡を求める
+def Koyomi.getRumia(k, s){
+	local ks = (k - s + 12) % 12
+	if ks == 0  { return "戌亥" }
+	if ks == 2  { return "申酉" }
+	if ks == 4  { return "午未" }
+	if ks == 6  { return "辰巳" }
+	if ks == 8  { return "寅卯" }
+	if ks == 10 { return "子丑" }
+}
+
+
+// 年月日を干支に変換
+/* {
+	k_year: 年の十干, s_year: 年の十二支, year: 年の干支文字列,
+	k_month: 月の十干, s_month: 月の十二支, month: 月の干支文字列,
+	k_day: 日の十干, s_day: 日の十二支, day: 日の干支文字列
+	sun: 太陽の位置（1～12, 月将）, rumia: 空亡, week: 曜日（1～7）
+} */
+def Koyomi.getDate(date){
+	local days = Koyomi.getDays(date)
+	local k_year, s_year = (date.year - 4) % 10 + 1, (date.year - 4) % 12 + 1
+	local k_month, s_month = (date.year * 12 + date.month + 2) % 10 + 1, date.month % 12 + 1
+	local k_day, s_day = (days + 5) % 10 + 1, (days + 3) % 12 + 1
+	local sun = :{[0] = 2, 1, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3}
+	return :{
+		k_year = k_year, s_year = s_year, year = Koyomi.K10[k_year]..Koyomi.S12[s_year],
+		k_month = k_month, s_month = s_month, month = Koyomi.K10[k_month]..Koyomi.S12[s_month],
+		k_day = k_day, s_day = s_day, day = Koyomi.K10[k_day]..Koyomi.S12[s_day],
+		sun = sun[date.day < Koyomi.get24skDay(date.year, date.month) and date.month-1 or date.month%12],
+		rumia = Koyomi.getRumia(k_day, s_day), week = Koyomi.getWeek(date),
+	}
+}
+
+
+// 時刻を十二支に変換（1～12）
+def Koyomi.getTime(hour){
+	return mod((hour + 1) $ 2 + 1, 12)
+}
+
+
+// 十干を五行に変換（1～5）
+def Koyomi.k2e(k){
+	return (k - 1) $ 2 + 1
+}
+
+// 十二支を五行に変換（1～5）
+def Koyomi.s2e(s){
+	return (:{5,3,1,1,3,2,2,3,4,4,3,5})[s]
+}
+
+
+// 五行生剋: a(1～5) vs b(1～5)
+// return 0: 助（同じ）, 1: 生（aがbから生じられる）, 2: 剋（aがbから剋される）
+//        3: 分（aがbを剋す）, 4: 洩（aがbを生じる）
+def Koyomi.match(a, b){
+	return (a - b + 5) % 5
+}
+
+return Koyomi

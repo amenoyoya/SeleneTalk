@@ -1,0 +1,50 @@
+require "WinTypes.sltk"
+
+local shell = ffi.load"shell32.dll"
+ffi.cdef[[
+int ShellExecuteW(unsigned int hwnd, const wchar_t *lpVerb, const wchar_t *lpFile,
+	const wchar_t *lpParameters, const wchar_t *lpDirectory, int nShowMode);
+int DragQueryFileW(int wp, int index, wchar_t *file, int len);
+]]
+
+/* ShowMode */
+Win32.SW_HIDE = 0
+Win32.SW_SHOWNORMAL = 1
+Win32.SW_SHOWMINIMIZED = 2
+Win32.SW_SHOWMAXIMIZED = 3
+Win32.SW_SHOWNOACTIVATE = 4
+Win32.SW_SHOW = 5
+Win32.SW_MINIMIZE = 6
+Win32.SW_SHOWMINNOACTIVE = 7
+Win32.SW_SHOWNA = 8
+Win32.SW_RESTORE = 9
+Win32.SW_SHOWDEFAULT = 10
+
+/* ShellExecute
+verb: 操作指定 "edit", "explore", "open", "print", "properties", "runas"
+file: 操作対象ファイルパス
+param: fileで実行可能ファイルを指定した場合、そのコマンドライン引数
+dir: 既定のディレクトリ
+showMode: アプリケーションの表示モード
+*/
+def Win32.shellExecute(verb, file, param, dir, showMode, hwnd){
+	return shell.ShellExecuteW(
+		hwnd or 0, Encoding.utf8ToWideString(verb),
+		Encoding.utf8ToWideString(file),
+		param and Encoding.utf8ToWideString(param) or nil,
+		dir and Encoding.utf8ToWideString(dir) or nil,
+		showMode or Win32.SW_SHOWNORMAL
+	)
+}
+
+/* ドロップされたファイル名リストを取得 */
+// wp: WM_DROPFILESメッセージのwParam
+def Win32.getDropFiles(wp){
+	local files = :{}
+	for i = 1, shell.DragQueryFileW(wp, -1, nil, 0) { 
+		local file = ffi.new"wchar_t[513]"
+		shell.DragQueryFileW(wp, i-1, file, 512)
+		files[i] = Encoding.wideStringToUTF8(file)
+	}
+	return files
+}
