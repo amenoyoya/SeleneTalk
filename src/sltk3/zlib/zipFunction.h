@@ -2,7 +2,7 @@
 
 /*** Zip関連関数 ***/
 
-#include "ZipArchiver.h"
+#include "zipArchiver.h"
 
 namespace Sltk{
 	// 埋め込みzipデータを削除する

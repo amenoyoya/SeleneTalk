@@ -188,5 +188,5 @@ namespace Sltk{
 }
 
 extern "C" {
-	#include "SFMT-1.4.1/sfmt.c"
+	#include "SFMT-1.4.1/SFMT.c"
 }
